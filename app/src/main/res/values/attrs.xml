@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Theme attributes resolved from the Material 3 palette, so the Java code can
+         read colours without depending on library R classes. -->
+    <attr name="vlColorPrimary" format="color|reference" />
+    <attr name="vlColorError" format="color|reference" />
+    <attr name="vlColorOnSurfaceVariant" format="color|reference" />
+</resources>

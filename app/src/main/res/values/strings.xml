@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Voice Latency Lab</string>
+    <string name="app_tagline">语音能力延迟测试台</string>
+
+    <string name="label_endpoint">接口地址</string>
+    <string name="label_api_key">API Key</string>
+    <string name="label_text">合成文本</string>
+    <string name="label_voice">音色</string>
+    <string name="label_language">语言</string>
+    <string name="label_iterations">重复次数</string>
+
+    <string name="section_mode">测试模式</string>
+    <string name="section_metric">延迟指标</string>
+    <string name="section_stats">统计</string>
+    <string name="section_history">最近记录</string>
+
+    <string name="action_start">开始测试</string>
+    <string name="action_stop">停止</string>
+    <string name="action_clear">清空记录</string>
+    <string name="action_settings">设置</string>
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_test_connection">连通性自检</string>
+    <string name="action_copy_diagnostic">复制全部异常信息</string>
+
+    <string name="metric_ttfa">首音延迟</string>
+    <string name="metric_ttfb">首字节</string>
+    <string name="metric_total">总耗时</string>
+    <string name="metric_head">响应头</string>
+    <string name="metric_jitter">抖动</string>
+
+    <string name="status_idle">就绪</string>
+    <string name="status_running">测试中…</string>
+
+    <string name="cd_level_meter">麦克风电平</string>
+</resources>

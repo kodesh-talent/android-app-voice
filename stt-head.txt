@@ -1,0 +1,20 @@
+HTTP/1.1 200 OK
+Alt-Svc: h3=":443"; ma=2592000
+Cache-Control: no-cache
+Cache-Control: no-cache
+Content-Type: text/html; charset=utf-8
+Date: Wed, 28 Oct 2026 10:03:55 GMT
+Etag: W/"1e9c30feea4173c7-32e38ce718689a00"
+Referrer-Policy: strict-origin-when-cross-origin
+Server: Caddy
+Vary: Accept-Encoding
+Vary: Origin
+X-Client-Request-Id: 14591afe-430d-498e-9a34-f6f288b49b77
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+X-Request-Id: 889ef631-6bb6-4846-8464-abdae5287893
+X-Request-Id: 487588136aa147729850d78a0a159db5
+X-Request-Id: 4315931a-c172-4554-bddf-8c79eac284b0
+X-Request-Id: efd92446-b348-452a-9c67-8a6a9fda83df
+Transfer-Encoding: chunked
+

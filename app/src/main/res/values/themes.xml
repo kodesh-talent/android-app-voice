@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material 3 base theme; colours come from the M3 dynamic/baseline palette. -->
+    <style name="Theme.VoiceLatency" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">?attr/isLightTheme</item>
+
+        <item name="vlColorPrimary">?attr/colorPrimary</item>
+        <item name="vlColorError">?attr/colorError</item>
+        <item name="vlColorOnSurfaceVariant">?attr/colorOnSurfaceVariant</item>
+    </style>
+
+    <style name="Widget.VoiceLatency.MetricValue" parent="android:Widget.TextView">
+        <item name="android:textAppearance">?attr/textAppearanceHeadlineMedium</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">-0.02</item>
+    </style>
+
+    <style name="Widget.VoiceLatency.MetricLabel" parent="android:Widget.TextView">
+        <item name="android:textAppearance">?attr/textAppearanceLabelMedium</item>
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
+    </style>
+</resources>
