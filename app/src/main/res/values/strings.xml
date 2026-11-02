@@ -7,7 +7,10 @@
     <string name="label_api_key">API Key</string>
     <string name="label_text">合成文本</string>
     <string name="label_voice">音色</string>
-    <string name="label_language">语言</string>
+    <string name="label_language">输入语言</string>
+    <string name="helper_language">识别与转写</string>
+    <string name="label_output_language">语音输出语言</string>
+    <string name="helper_output_language">实时回复与语音合成</string>
     <string name="label_iterations">重复次数</string>
 
     <string name="section_mode">测试模式</string>

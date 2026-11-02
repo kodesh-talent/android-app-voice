@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "base64.h"
-#include "client_vad.h"
 #include "json_lite.h"
 #include "ws_frame.h"
 
@@ -22,6 +21,9 @@ constexpr int64_t kNoResponseTimeoutMs = 15000;
 constexpr int64_t kResponseTimeoutMs = 60000;
 constexpr int64_t kReadyFallbackMs = 2000;
 constexpr int64_t kResumeDelayMs = 200;
+// Gateway closes the socket with 1009 once a text frame exceeds 32769 bytes.
+// 100 ms of 24 kHz PCM16 is 4800 bytes and stays far under that limit.
+constexpr size_t kMaxAppendPcmBytes = 4800;
 
 std::string shorten(const std::string& text, size_t limit) {
     return text.size() <= limit ? text : text.substr(0, limit) + "...";
@@ -32,6 +34,20 @@ int statusCodeFromHead(const std::string& head) {
     const std::string statusLine = lineEnd == std::string::npos ? head : head.substr(0, lineEnd);
     const size_t firstSpace = statusLine.find(' ');
     return firstSpace == std::string::npos ? 0 : std::atoi(statusLine.c_str() + firstSpace + 1);
+}
+
+std::string closeReason(const std::string& payload) {
+    if (payload.size() < 2) {
+        return payload.empty() ? "websocket closed by server" : "websocket closed by server: " + payload;
+    }
+    const int code = (static_cast<unsigned char>(payload[0]) << 8) |
+                     static_cast<unsigned char>(payload[1]);
+    const std::string text = payload.substr(2);
+    std::string message = "websocket closed by server: " + std::to_string(code);
+    if (!text.empty()) {
+        message += " " + text;
+    }
+    return message;
 }
 
 }  // namespace
@@ -90,9 +106,21 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
     const std::string head = headBuffer.substr(0, headEnd);
     std::string acceptError;
     if (!validateHandshakeResponse(head, key, acceptError)) {
+        std::string body = headBuffer.substr(headEnd);
+        if (body.empty()) {
+            const int extra = transport.read(buffer.data(), static_cast<int>(buffer.size()));
+            if (extra > 0) {
+                body.assign(buffer.data(), static_cast<size_t>(extra));
+                headBuffer.append(body);
+            }
+        }
         report.error = acceptError;
-        report.bodyPreview = shorten(head, kPreviewLimit);
+        if (!body.empty()) {
+            report.error += " " + shorten(body, 240);
+        }
+        report.bodyPreview = shorten(body.empty() ? head : body, kPreviewLimit);
         report.responseBody = headBuffer;
+        report.bodyBytes = body.size();
         report.statusCode = statusCodeFromHead(head);
         report.headMs = static_cast<double>(nowMicros() - startUs) / 1000.0;
         return report;
@@ -110,35 +138,18 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
         parser.feed(leftover.data(), leftover.size());
     }
 
-    const int pcmRate = config.sampleRate > 0 ? config.sampleRate : 16000;
-    JsonValue sessionUpdate = JsonValue::makeObject();
-    sessionUpdate.set("type", JsonValue::makeString("session.update"));
-    JsonValue session = JsonValue::makeObject();
-    session.set("voice", JsonValue::makeString(config.voice));
-    JsonValue sessionModalities = JsonValue::makeArray();
-    sessionModalities.push(JsonValue::makeString("text"));
-    sessionModalities.push(JsonValue::makeString("audio"));
-    session.set("modalities", std::move(sessionModalities));
-    session.set("instructions", JsonValue::makeString(
-        "You are a helpful voice assistant. Reply concisely in the user's language."));
-    session.set("turn_detection", JsonValue());
-    JsonValue audio = JsonValue::makeObject();
-    JsonValue input = JsonValue::makeObject();
-    JsonValue inputFormat = JsonValue::makeObject();
-    inputFormat.set("type", JsonValue::makeString("audio/pcm"));
-    inputFormat.set("rate", JsonValue::makeNumber(pcmRate));
-    input.set("format", std::move(inputFormat));
-    input.set("transport", JsonValue::makeString("json"));
-    audio.set("input", std::move(input));
-    JsonValue output = JsonValue::makeObject();
-    JsonValue outputFormat = JsonValue::makeObject();
-    outputFormat.set("type", JsonValue::makeString("audio/pcm"));
-    outputFormat.set("rate", JsonValue::makeNumber(pcmRate));
-    output.set("format", std::move(outputFormat));
-    output.set("transport", JsonValue::makeString("json"));
-    audio.set("output", std::move(output));
-    session.set("audio", std::move(audio));
-    sessionUpdate.set("session", std::move(session));
+    ProbeConfig sessionConfig = config;
+    if (sessionConfig.sampleRate <= 0) {
+        sessionConfig.sampleRate = 24000;
+    }
+    const int pcmRate = sessionConfig.sampleRate;
+    JsonValue sessionUpdate;
+    std::string sessionError;
+    if (!JsonValue::parse(buildRealtimeSessionUpdate(sessionConfig), sessionUpdate, sessionError)
+            || !sessionUpdate.isObject()) {
+        report.error = "failed to build session.update";
+        return report;
+    }
 
     auto writeTextEvent = [&transport](const JsonValue& event) {
         const std::string payload = event.dump();
@@ -209,30 +220,26 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
         }
     };
 
-    auto appendAudio = [&writeTextEvent](const std::string& pcm) {
-        if (pcm.empty()) {
-            return true;
+    auto appendAudio = [&writeTextEvent, pcmRate](const std::string& pcm) {
+        size_t offset = 0;
+        while (offset < pcm.size()) {
+            const size_t hundredMs = static_cast<size_t>(std::max(pcmRate, 8000)) * 2 / 10;
+            size_t count = std::min(std::min(kMaxAppendPcmBytes, hundredMs), pcm.size() - offset);
+            if (count > 1 && (count % 2) != 0) {
+                --count;
+            }
+            if (count == 0) {
+                break;
+            }
+            JsonValue append = JsonValue::makeObject();
+            append.set("type", JsonValue::makeString("input_audio_buffer.append"));
+            append.set("audio", JsonValue::makeString(base64Encode(pcm.substr(offset, count))));
+            if (!writeTextEvent(append)) {
+                return false;
+            }
+            offset += count;
         }
-        JsonValue append = JsonValue::makeObject();
-        append.set("type", JsonValue::makeString("input_audio_buffer.append"));
-        append.set("audio", JsonValue::makeString(base64Encode(pcm)));
-        return writeTextEvent(append);
-    };
-
-    auto requestResponse = [&writeTextEvent]() {
-        JsonValue commit = JsonValue::makeObject();
-        commit.set("type", JsonValue::makeString("input_audio_buffer.commit"));
-        if (!writeTextEvent(commit)) {
-            return false;
-        }
-        JsonValue create = JsonValue::makeObject();
-        create.set("type", JsonValue::makeString("response.create"));
-        JsonValue response = JsonValue::makeObject();
-        JsonValue modalities = JsonValue::makeArray();
-        modalities.push(JsonValue::makeString("audio"));
-        response.set("modalities", std::move(modalities));
-        create.set("response", std::move(response));
-        return writeTextEvent(create);
+        return true;
     };
 
     const int64_t requestedMs = maxDurationMs > 0
@@ -242,8 +249,8 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
         nowMicros() + std::max<int64_t>(10000, requestedMs) * 1000;
     const int64_t readyFallbackUs = startUs + kReadyFallbackMs * 1000;
 
-    ClientVad vad(pcmRate);
     bool sawSessionUpdated = false;
+    bool primedMic = false;
     bool responseActive = false;
     bool responseCreated = false;
     bool stoppedByUser = false;
@@ -266,14 +273,20 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
 
         const int64_t now = nowMicros();
         const bool microphoneReady = sawSessionUpdated || now >= readyFallbackUs;
+        if (!primedMic && microphoneReady) {
+            primedMic = true;
+            // Drop audio captured while the socket was still connecting. The
+            // gateway uses server VAD and will not answer a client commit.
+            setMicPaused(false);
+            notifyEvent("local.listening", "{}");
+        }
         if (!responseActive && microphoneReady && resumeAtUs > 0 && now >= resumeAtUs) {
-            vad.reset();
             setMicPaused(false);
             notifyEvent("local.listening", "{}");
             resumeAtUs = 0;
         }
         if (!responseActive && microphoneReady && now >= resumeAtUs) {
-            for (int i = 0; i < 5; ++i) {
+            for (int i = 0; i < 8; ++i) {
                 if (!listener.valid() || listener.readMicMethod == nullptr) {
                     break;
                 }
@@ -293,27 +306,8 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
                         micChunk, 0, length, reinterpret_cast<jbyte*>(&pcm[0]));
                 }
                 listener.env->DeleteLocalRef(micChunk);
-
-                ClientVad::Result detected = vad.process(pcm.data(), pcm.size());
-                if (detected.speechStarted) {
-                    notifyEvent("local.speech_started", "{}");
-                }
-                if (!appendAudio(detected.audio)) {
+                if (!appendAudio(pcm)) {
                     report.error = "failed to send microphone audio";
-                    break;
-                }
-                if (detected.utteranceComplete) {
-                    if (!requestResponse()) {
-                        report.error = "failed to commit realtime audio";
-                        break;
-                    }
-                    responseActive = true;
-                    responseCreated = false;
-                    responseRequestedUs = nowMicros();
-                    turnStartUs = responseRequestedUs;
-                    vad.reset();
-                    setMicPaused(true);
-                    notifyEvent("local.response_requested", "{}");
                     break;
                 }
             }
@@ -334,7 +328,7 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
             break;
         }
         if (count == 0) {
-            if (responseActive && responseRequestedUs > 0 &&
+            if (responseRequestedUs > 0 && !responseCreated &&
                 nowMicros() - responseRequestedUs > kNoResponseTimeoutMs * 1000) {
                 report.error = "realtime server did not respond";
                 break;
@@ -363,7 +357,7 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
                     serverClosed = true;
                     break;
                 }
-                report.error = "websocket closed by server";
+                report.error = closeReason(frame.payload);
                 break;
             }
             if (frame.opcode != WsOpcode::Text) {
@@ -385,12 +379,20 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
 
             if (eventType == "session.updated") {
                 sawSessionUpdated = true;
-            } else if (eventType == "response.created") {
-                responseCreated = true;
+            } else if (eventType == "input_audio_buffer.speech_stopped" ||
+                       eventType == "input_audio_buffer.committed") {
                 if (responseRequestedUs == 0) {
                     responseRequestedUs = nowMicros();
                     turnStartUs = responseRequestedUs;
                 }
+            } else if (eventType == "response.created") {
+                responseCreated = true;
+                responseActive = true;
+                if (responseRequestedUs == 0) {
+                    responseRequestedUs = nowMicros();
+                    turnStartUs = responseRequestedUs;
+                }
+                setMicPaused(true);
             } else if (eventType == "response.output_audio.delta" ||
                        eventType == "response.audio.delta") {
                 std::string pcm;
@@ -422,10 +424,10 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
                 }
             } else if (eventType == "response.done" || eventType == "response.completed") {
                 const std::string status = event["response"]["status"].asString();
-                if (status == "cancelled" && !stoppedByUser) {
-                    report.error = "realtime response cancelled";
-                } else if (status == "incomplete" || status == "failed") {
-                    report.error = "realtime response incomplete";
+                // server_vad barge-in cancels the current reply and keeps the session open.
+                const bool cancelled = status == "cancelled";
+                if (!cancelled && (status == "incomplete" || status == "failed")) {
+                    report.error = "realtime response " + status;
                 }
                 if (!currentTranscript.empty()) {
                     if (!streamedTranscript.empty()) {
@@ -434,12 +436,13 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
                     streamedTranscript += currentTranscript;
                 }
                 currentTranscript.clear();
-                ++turns;
+                if (!cancelled || firstAudioUs > 0) {
+                    ++turns;
+                }
                 responseActive = false;
                 responseCreated = false;
                 responseRequestedUs = 0;
                 firstAudioUs = 0;
-                vad.reset();
                 // Keep the microphone paused through the short cooldown so the
                 // tail of the assistant audio is not captured into the next turn.
                 setMicPaused(true);
@@ -459,7 +462,7 @@ ProbeReport runRealtimeProbe(const TransportBinding& transport, const RealtimeLi
         if (serverClosed) {
             break;
         }
-        if (responseActive && responseRequestedUs > 0 && !responseCreated &&
+        if (responseRequestedUs > 0 && !responseCreated &&
             nowMicros() - responseRequestedUs > kNoResponseTimeoutMs * 1000) {
             report.error = "realtime server did not respond";
             break;

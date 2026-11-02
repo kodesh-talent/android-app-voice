@@ -9,6 +9,7 @@
 #include "base64.h"
 #include "json_lite.h"
 #include "mpeg_audio.h"
+#include "realtime_language.h"
 #include "synth.h"
 #include "wav_codec.h"
 #include "ws_frame.h"
@@ -197,6 +198,9 @@ ProbeConfig ProbeConfig::fromJson(const std::string& json) {
     if (parsed.has("text")) config.text = parsed["text"].asString(config.text);
     if (parsed.has("voice")) config.voice = parsed["voice"].asString(config.voice);
     if (parsed.has("language")) config.language = parsed["language"].asString(config.language);
+    if (parsed.has("outputLanguage")) {
+        config.outputLanguage = parsed["outputLanguage"].asString(config.outputLanguage);
+    }
     if (parsed.has("ttsModel")) config.ttsModel = parsed["ttsModel"].asString(config.ttsModel);
     if (parsed.has("sttModel")) config.sttModel = parsed["sttModel"].asString(config.sttModel);
     if (parsed.has("realtimeModel")) {
@@ -249,12 +253,53 @@ std::string ProbeReport::toJson() const {
     return root.dump();
 }
 
+std::string buildRealtimeSessionUpdate(const ProbeConfig& config) {
+    const int pcmRate = config.sampleRate > 0 ? config.sampleRate : 24000;
+    const std::string spoken = config.outputLanguage.empty()
+        ? config.language : config.outputLanguage;
+    JsonValue sessionUpdate = JsonValue::makeObject();
+    sessionUpdate.set("type", JsonValue::makeString("session.update"));
+    JsonValue session = JsonValue::makeObject();
+    session.set("voice", JsonValue::makeString(config.voice.empty() ? "Ara" : config.voice));
+    JsonValue modalities = JsonValue::makeArray();
+    modalities.push(JsonValue::makeString("text"));
+    modalities.push(JsonValue::makeString("audio"));
+    session.set("modalities", std::move(modalities));
+    session.set("instructions", JsonValue::makeString(realtimeOutputInstructions(spoken)));
+    JsonValue turnDetection = JsonValue::makeObject();
+    turnDetection.set("type", JsonValue::makeString("server_vad"));
+    session.set("turn_detection", std::move(turnDetection));
+
+    JsonValue audio = JsonValue::makeObject();
+    JsonValue input = JsonValue::makeObject();
+    JsonValue inputFormat = JsonValue::makeObject();
+    inputFormat.set("type", JsonValue::makeString("audio/pcm"));
+    inputFormat.set("rate", JsonValue::makeNumber(pcmRate));
+    input.set("format", std::move(inputFormat));
+    JsonValue transcription = JsonValue::makeObject();
+    transcription.set("language_hint", JsonValue::makeString(realtimeLanguageHint(config.language)));
+    input.set("transcription", std::move(transcription));
+    audio.set("input", std::move(input));
+
+    JsonValue output = JsonValue::makeObject();
+    JsonValue outputFormat = JsonValue::makeObject();
+    outputFormat.set("type", JsonValue::makeString("audio/pcm"));
+    outputFormat.set("rate", JsonValue::makeNumber(pcmRate));
+    output.set("format", std::move(outputFormat));
+    audio.set("output", std::move(output));
+    session.set("audio", std::move(audio));
+    sessionUpdate.set("session", std::move(session));
+    return sessionUpdate.dump();
+}
+
 std::string buildTtsBody(const ProbeConfig& config) {
     JsonValue body = JsonValue::makeObject();
     body.set("model", JsonValue::makeString(config.ttsModel));
     body.set("input", JsonValue::makeString(config.text));
     body.set("voice", JsonValue::makeString(config.voice));
-    body.set("language", JsonValue::makeString(config.language));
+    const std::string spoken = config.outputLanguage.empty()
+        ? config.language : config.outputLanguage;
+    body.set("language", JsonValue::makeString(spoken));
     return body.dump();
 }
 

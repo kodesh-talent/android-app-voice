@@ -411,6 +411,8 @@ public final class MainActivity extends AppCompatActivity implements ProbeEngine
         TextInputEditText inputText = content.findViewById(R.id.input_text);
         MaterialAutoCompleteTextView inputVoice = content.findViewById(R.id.input_voice);
         MaterialAutoCompleteTextView inputLanguage = content.findViewById(R.id.input_language);
+        MaterialAutoCompleteTextView inputOutputLanguage =
+                content.findViewById(R.id.input_output_language);
         Slider sliderIterations = content.findViewById(R.id.slider_iterations);
         MaterialSwitch switchSimulated = content.findViewById(R.id.switch_simulated);
         TextView endpointHint = content.findViewById(R.id.text_endpoint_hint);
@@ -425,6 +427,9 @@ public final class MainActivity extends AppCompatActivity implements ProbeEngine
         inputLanguage.setAdapter(new ArrayAdapter<>(this,
                 android.R.layout.simple_list_item_1, LANGUAGES));
         inputLanguage.setText(settings.language, false);
+        inputOutputLanguage.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_list_item_1, LANGUAGES));
+        inputOutputLanguage.setText(settings.outputLanguage, false);
 
         sliderIterations.setValue(Math.min(20, Math.max(1, settings.iterations)));
         switchSimulated.setChecked(mode == ProbeMode.SIMULATED);
@@ -459,6 +464,12 @@ public final class MainActivity extends AppCompatActivity implements ProbeEngine
                         String language = inputLanguage.getText().toString().trim();
                         if (!language.isEmpty()) {
                             settings.language = language;
+                        }
+                    }
+                    if (inputOutputLanguage.getText() != null) {
+                        String outputLanguage = inputOutputLanguage.getText().toString().trim();
+                        if (!outputLanguage.isEmpty()) {
+                            settings.outputLanguage = outputLanguage;
                         }
                     }
                     settings.iterations = (int) sliderIterations.getValue();

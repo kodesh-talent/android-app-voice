@@ -4,7 +4,7 @@ package com.xeno.voicelatency;
 public enum ProbeMode {
     TTS("tts", 0, "TTS 合成", "文本 → 音频，测首音延迟"),
     STT("stt", 1, "STT 识别", "录音 → 文本，测转写延迟"),
-    REALTIME("realtime", 2, "实时语音", "连续对话：停顿自动提交，点击停止结束"),
+    REALTIME("realtime", 2, "实时语音", "连续对话：停顿自动提交，回复语言跟随输出语言"),
     SIMULATED("simulated", 3, "模拟链路", "本地合成 + 仿真网关延迟");
 
     public final String id;

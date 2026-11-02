@@ -69,6 +69,7 @@ struct ProbeConfig {
     std::string text = "这是一段用于测试语音延迟的中文示例。";
     std::string voice = "Ara";
     std::string language = "zh";
+    std::string outputLanguage = "zh";
     std::string ttsModel = "grok-voice-tts";
     std::string sttModel = "grok-voice-stt";
     std::string realtimeModel = "grok-voice-realtime";
@@ -123,6 +124,9 @@ ProbeReport runTtsProbe(const TransportBinding& transport, const ProbeConfig& co
 // Runs a synchronous STT probe with the supplied WAV payload.
 ProbeReport runSttProbe(const TransportBinding& transport, const ProbeConfig& config,
                         const std::string& wavBytes);
+
+// session.update payload for Grok Voice Realtime, as used by the gateway doc.
+std::string buildRealtimeSessionUpdate(const ProbeConfig& config);
 
 // Drives a Realtime session until the listener stops it, the turn completes, or
 // |maxDurationMs| elapses.

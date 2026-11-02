@@ -6,6 +6,8 @@ import android.content.pm.PackageManager;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.media.audiofx.AcousticEchoCanceler;
+import android.media.audiofx.NoiseSuppressor;
 import android.os.Build;
 
 import androidx.core.content.ContextCompat;
@@ -29,6 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class AudioCapture {
 
     public static final int SAMPLE_RATE = 16000;
+    /** Documented Realtime default: 24 kHz PCM16. */
+    public static final int REALTIME_SAMPLE_RATE = 24000;
     /** 20 ms of 16 kHz PCM16. */
     public static final int FRAME_BYTES = 640;
     private static final int MAX_QUEUED_FRAMES = 400;
@@ -41,6 +45,9 @@ public final class AudioCapture {
     private volatile Thread worker;
     private volatile ByteArrayOutputStream sink;
     private volatile String error;
+    private volatile int activeRate = SAMPLE_RATE;
+    private AcousticEchoCanceler echoCanceler;
+    private NoiseSuppressor noiseSuppressor;
 
     /** True when RECORD_AUDIO is already granted. */
     public static boolean hasPermission(Context context) {
@@ -66,8 +73,7 @@ public final class AudioCapture {
 
     /** Starts streaming capture; frames are taken with {@link #drainChunk()}. */
     public boolean startStream() {
-        queue.clear();
-        return startInternal(15000, false);
+        return startStream(15000, SAMPLE_RATE);
     }
 
     /**
@@ -75,8 +81,18 @@ public final class AudioCapture {
      * safety bound; the session stops capture explicitly after it is committed.
      */
     public boolean startStream(int maxDurationMs) {
+        return startStream(maxDurationMs, SAMPLE_RATE);
+    }
+
+    /** Realtime capture at the documented PCM rate, falling back if the device cannot open it. */
+    public boolean startStream(int maxDurationMs, int sampleRate) {
         queue.clear();
-        return startInternal(Math.max(1000, maxDurationMs), false);
+        return startInternal(Math.max(1000, maxDurationMs), false, sampleRate, true);
+    }
+
+    /** Rate actually opened by the last successful {@link #startStream(int, int)}. */
+    public int activeSampleRate() {
+        return activeRate;
     }
 
     /** Returns the next captured frame, or null when none is buffered yet. */
@@ -95,34 +111,48 @@ public final class AudioCapture {
     }
 
     private boolean startInternal(int maxDurationMs, boolean bufferAll) {
+        return startInternal(maxDurationMs, bufferAll, SAMPLE_RATE, false);
+    }
+
+    private boolean startInternal(int maxDurationMs, boolean bufferAll, int sampleRate,
+                                  boolean communication) {
         if (recording.get()) {
             return true;
         }
         error = null;
-
-        final int minBuffer = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        int rate = sampleRate > 0 ? sampleRate : SAMPLE_RATE;
+        int minBuffer = AudioRecord.getMinBufferSize(
+                rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        if (minBuffer <= 0 && rate != SAMPLE_RATE) {
+            rate = SAMPLE_RATE;
+            minBuffer = AudioRecord.getMinBufferSize(
+                    rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        }
         if (minBuffer <= 0) {
-            error = "设备不支持 16 kHz 单声道 PCM 采集";
+            error = "设备不支持 " + sampleRate + " Hz 单声道 PCM 采集";
             return false;
         }
+        activeRate = rate;
+        final int source = communication
+                ? MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                : MediaRecorder.AudioSource.VOICE_RECOGNITION;
         final int bufferSize = Math.max(minBuffer * 2, FRAME_BYTES * 4);
 
         AudioRecord created;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 created = new AudioRecord.Builder()
-                        .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                        .setAudioSource(source)
                         .setAudioFormat(new AudioFormat.Builder()
                                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                .setSampleRate(SAMPLE_RATE)
+                                .setSampleRate(rate)
                                 .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
                                 .build())
                         .setBufferSizeInBytes(bufferSize)
                         .build();
             } else {
-                created = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                        SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
+                created = new AudioRecord(source,
+                        rate, AudioFormat.CHANNEL_IN_MONO,
                         AudioFormat.ENCODING_PCM_16BIT, bufferSize);
             }
         } catch (IllegalArgumentException | SecurityException | UnsupportedOperationException e) {
@@ -138,9 +168,12 @@ public final class AudioCapture {
 
         record = created;
         sink = bufferAll
-                ? new ByteArrayOutputStream(SAMPLE_RATE * 2 * Math.max(1, maxDurationMs / 1000))
+                ? new ByteArrayOutputStream(rate * 2 * Math.max(1, maxDurationMs / 1000))
                 : null;
         recording.set(true);
+        if (communication) {
+            enableVoiceEffects(created.getAudioSessionId());
+        }
 
         final long deadline = System.currentTimeMillis() + Math.max(250, maxDurationMs);
         Thread thread = new Thread(() -> {
@@ -168,6 +201,7 @@ public final class AudioCapture {
             } catch (IllegalStateException e) {
                 error = "麦克风状态异常：" + e.getMessage();
             } finally {
+                releaseVoiceEffects();
                 try {
                     created.stop();
                 } catch (IllegalStateException ignored) {
@@ -213,6 +247,7 @@ public final class AudioCapture {
     /** Stops capture and drops buffered audio. */
     public void release() {
         stop();
+        releaseVoiceEffects();
         queue.clear();
         sink = null;
         AudioRecord active = record;
@@ -223,6 +258,34 @@ public final class AudioCapture {
                 // Already released.
             }
             record = null;
+        }
+    }
+
+
+    private void enableVoiceEffects(int sessionId) {
+        releaseVoiceEffects();
+        if (AcousticEchoCanceler.isAvailable()) {
+            echoCanceler = AcousticEchoCanceler.create(sessionId);
+            if (echoCanceler != null) {
+                echoCanceler.setEnabled(true);
+            }
+        }
+        if (NoiseSuppressor.isAvailable()) {
+            noiseSuppressor = NoiseSuppressor.create(sessionId);
+            if (noiseSuppressor != null) {
+                noiseSuppressor.setEnabled(true);
+            }
+        }
+    }
+
+    private void releaseVoiceEffects() {
+        if (echoCanceler != null) {
+            echoCanceler.release();
+            echoCanceler = null;
+        }
+        if (noiseSuppressor != null) {
+            noiseSuppressor.release();
+            noiseSuppressor = null;
         }
     }
 

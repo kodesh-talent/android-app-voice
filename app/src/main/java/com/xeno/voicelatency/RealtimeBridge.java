@@ -45,7 +45,8 @@ public final class RealtimeBridge {
         micPaused = false;
         communicationModeActive = false;
         capture.release();
-        micStarted = capture.startStream(maxDurationMs);
+        micStarted = capture.startStream(maxDurationMs, AudioCapture.REALTIME_SAMPLE_RATE);
+        sampleRate = capture.activeSampleRate();
         if (!micStarted) {
             String error = capture.lastError();
             onError(error == null || error.isEmpty() ? "无法启动麦克风" : error);
@@ -121,7 +122,13 @@ public final class RealtimeBridge {
                 notifyState("会话已就绪，请开始说话");
                 break;
             case "local.speech_started":
+            case "input_audio_buffer.speech_started":
+                playback.stop();
+                playbackStarted = false;
                 notifyState("检测到说话…");
+                break;
+            case "input_audio_buffer.speech_stopped":
+                notifyState("说话结束，等待回复…");
                 break;
             case "local.response_requested":
                 notifyState("说话结束，等待回复…");
@@ -159,6 +166,10 @@ public final class RealtimeBridge {
         if (rate > 0) {
             sampleRate = rate;
         }
+    }
+
+    int sampleRate() {
+        return sampleRate;
     }
 
     /** Native calls this after commit; stop uploading the current turn. */

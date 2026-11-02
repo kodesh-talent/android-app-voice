@@ -45,6 +45,16 @@ public final class ProbeEngine {
         thread.setDaemon(true);
         return thread;
     });
+    /**
+     * Socket close does a TLS write. It must not run on the UI thread, and it
+     * cannot be queued on {@link #executor} because that thread is blocked in
+     * the live probe.
+     */
+    private final ExecutorService closer = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "probe-close");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AudioCapture capture = new AudioCapture();
@@ -72,7 +82,7 @@ public final class ProbeEngine {
         }
         TlsTransport transport = realtimeTransport;
         if (transport != null) {
-            transport.close();
+            closer.execute(transport::close);
         }
     }
 
@@ -197,15 +207,33 @@ public final class ProbeEngine {
     }
 
     private ProbeResult runRealtime(ProbeSettings settings, Listener listener) {
+        ProbeResult result = runRealtimeOnce(settings, listener, null);
+        if (result.ok || (result.statusCode != 502 && result.statusCode != 503)) {
+            return result;
+        }
+        final String alternate = ProbeSettings.alternateBaseUrl(settings.baseUrl);
+        if (alternate == null) {
+            return result;
+        }
+        final int status = result.statusCode;
+        post(() -> listener.onStatus(
+                "主地址返回 " + status + "，正在改用文档中的备用地址…"));
+        return runRealtimeOnce(settings, listener, alternate);
+    }
+
+    private ProbeResult runRealtimeOnce(ProbeSettings settings, Listener listener,
+                                        String baseUrlOverride) {
         TlsTransport transport = null;
         RealtimeBridge bridge = null;
         try {
             if (!AudioCapture.hasPermission(context)) {
                 return error(ProbeMode.REALTIME, "缺少录音权限，请在设置中授权麦克风");
             }
-            final String config = settings.toNativeConfigJson();
+            final String seed = settings.toNativeConfigJson(
+                    baseUrlOverride == null ? null : ProbeSettings.realtimeUrlFor(baseUrlOverride),
+                    AudioCapture.REALTIME_SAMPLE_RATE);
             String realtimeUrl = Json.string(
-                    Json.parseObject(VoiceNative.nativeDescribeConfig(config)), "realtimeUrl", "");
+                    Json.parseObject(VoiceNative.nativeDescribeConfig(seed)), "realtimeUrl", "");
             if (realtimeUrl.isEmpty()) {
                 return error(ProbeMode.REALTIME, "无法解析 Realtime 地址");
             }
@@ -218,13 +246,14 @@ public final class ProbeEngine {
 
             bridge = new RealtimeBridge(context,
                     state -> post(() -> listener.onRealtimeState(state)));
-            bridge.setSampleRate(AudioCapture.SAMPLE_RATE);
             realtimeBridge = bridge;
             if (!bridge.startCapture(125000)) {
                 String reason = bridge.lastError();
                 return error(ProbeMode.REALTIME,
                         reason == null || reason.isEmpty() ? "无法启动麦克风" : reason);
             }
+            bridge.setSampleRate(bridge.sampleRate());
+            final String config = settings.toNativeConfigJson(realtimeUrl, bridge.sampleRate());
 
             String report = VoiceNative.nativeRunRealtimeProbe(
                     transport, bridge, config, 120000L);
@@ -386,5 +415,6 @@ public final class ProbeEngine {
         playback.stop();
         capture.release();
         executor.shutdownNow();
+        closer.shutdown();
     }
 }

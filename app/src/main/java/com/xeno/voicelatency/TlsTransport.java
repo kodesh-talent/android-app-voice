@@ -93,9 +93,14 @@ public final class TlsTransport {
         }
     }
 
-    /** Called from native code when the exchange is finished. */
+    /** Called from native code when the exchange is finished. Safe to call twice. */
     public void close() {
-        closed = true;
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+        }
         try {
             socket.close();
         } catch (IOException ignored) {

@@ -27,7 +27,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:hint="@string/label_endpoint"
-            app:helperText="Base URL，例如 https://xenoai.eu.cc/v1">
+            app:helperText="文档地址：https://xenoai.eu.cc/v1 或 https://us.xenoai.eu.cc/v1。主地址 502 时自动改用另一个。">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/input_base_url"
@@ -104,7 +104,8 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:hint="@string/label_language">
+                android:hint="@string/label_language"
+                app:helperText="@string/helper_language">
 
                 <com.google.android.material.textfield.MaterialAutoCompleteTextView
                     android:id="@+id/input_language"
@@ -113,6 +114,21 @@
                     android:inputType="none" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:hint="@string/label_output_language"
+            app:helperText="@string/helper_output_language">
+
+            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                android:id="@+id/input_output_language"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="none" />
+        </com.google.android.material.textfield.TextInputLayout>
 
         <TextView
             android:layout_width="match_parent"

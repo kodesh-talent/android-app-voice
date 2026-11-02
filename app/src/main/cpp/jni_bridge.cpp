@@ -96,6 +96,7 @@ Java_com_xeno_voicelatency_VoiceNative_nativeDescribeConfig(JNIEnv* env, jclass,
     root.set("realtimeModel", vcore::JsonValue::makeString(config.realtimeModel));
     root.set("voice", vcore::JsonValue::makeString(config.voice));
     root.set("language", vcore::JsonValue::makeString(config.language));
+    root.set("outputLanguage", vcore::JsonValue::makeString(config.outputLanguage));
     root.set("sampleRate", vcore::JsonValue::makeNumber(config.sampleRate));
     return toJava(env, root.dump());
 }

@@ -10,6 +10,7 @@
 
 #include "base64.h"
 #include "client_vad.h"
+#include "realtime_language.h"
 #include "http_client.h"
 #include "json_lite.h"
 #include "latency_stats.h"
@@ -270,6 +271,21 @@ void appendVadFrames(std::string& pcm, int16_t amplitude, int frames) {
     }
 }
 
+
+void testRealtimeLanguage() {
+    std::printf("realtime output language\n");
+    check(vcore::realtimeLanguageHint("zh") == "zh", "zh hint");
+    check(vcore::realtimeLanguageHint("zh-CN") == "zh", "zh-CN hint");
+    check(vcore::realtimeLanguageHint("en") == "en", "en hint");
+    check(vcore::realtimeLanguageHint("EN-US") == "en", "en-us hint");
+    const std::string zh = vcore::realtimeOutputInstructions("zh");
+    const std::string en = vcore::realtimeOutputInstructions("en");
+    check(zh.find("简体中文") != std::string::npos, "zh prompt");
+    check(zh.find("English") == std::string::npos, "zh prompt stays Chinese");
+    check(en.find("only in English") != std::string::npos, "en prompt");
+    check(en.find("简体中文") == std::string::npos, "en prompt stays English");
+}
+
 void testClientVad() {
     std::printf("client VAD\n");
     vcore::ClientVad vad(16000, 100, 100, 60, 500);
@@ -307,6 +323,7 @@ int main(int argc, char** argv) {
     testStats();
     testBase64();
     testRealtimeEventShapes();
+    testRealtimeLanguage();
     testClientVad();
     testWavRoundTrip();
     testWebSocket();

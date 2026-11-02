@@ -121,7 +121,15 @@ public final class ProbeResult {
 
     /** Message field of the gateway's JSON error envelope, if present. */
     public String gatewayMessage() {
-        final String body = bodyPreview.trim();
+        final String fromResponse = messageIn(responseBody);
+        if (!fromResponse.isEmpty()) {
+            return fromResponse;
+        }
+        return messageIn(bodyPreview);
+    }
+
+    private static String messageIn(String raw) {
+        final String body = raw == null ? "" : raw.trim();
         if (body.isEmpty()) {
             return "";
         }
@@ -203,7 +211,9 @@ public final class ProbeResult {
         }
         if (error.contains("handshake rejected")) {
             if (statusCode == 502 || error.contains("502")) {
-                return "实时会话握手被拒：网关上游不可用（502），Realtime 通道当前不可用";
+                final String upstream = gatewayMessage();
+                return "实时会话握手被拒：网关上游不可用（502）"
+                        + (upstream.isEmpty() ? "，Realtime 通道当前不可用" : "：" + upstream);
             }
             if (statusCode == 401 || statusCode == 403) {
                 return "实时会话握手被拒：鉴权失败，请检查 API Key";
@@ -216,6 +226,12 @@ public final class ProbeResult {
         }
         if (statusCode == 400 && !message.isEmpty()) {
             return "请求被拒绝：" + message;
+        }
+        if (error.contains("websocket closed by server")) {
+            if (error.contains("1009") || error.contains("32769")) {
+                return "实时连接被网关关闭：单条音频消息超过 32769 字节";
+            }
+            return "实时连接被服务端关闭：" + error;
         }
         if (error.contains("websocket handshake closed by peer")) {
             return "实时 WebSocket 在完成握手前被关闭。下方为完整响应，"
